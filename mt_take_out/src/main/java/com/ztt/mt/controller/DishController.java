@@ -14,7 +14,9 @@ import com.ztt.mt.service.DishService;
 import com.ztt.mt.utils.BaseContext;
 import com.ztt.mt.utils.R;
 import org.springframework.beans.BeanUtils;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.ResponseEntity;
+import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,6 +24,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -37,6 +40,8 @@ public class DishController {
      * 服务对象
      */
     @Autowired
+    RedisTemplate redisTemplate;
+    @Autowired
     private DishService dishService;
     @Autowired
     CategoryService categoryService;
@@ -45,6 +50,7 @@ public class DishController {
     @PostMapping
     public R<String> saveDishFlover(@RequestBody DishDTO dishDTO){
         dishService.saveFlavor(dishDTO);
+        redisTemplate.delete("dish_"+dishDTO.getCategoryId()+"_1");
         return R.success("菜品保存成功！");
     }
     @GetMapping("/page")
@@ -78,6 +84,7 @@ public class DishController {
     @DeleteMapping
     public R<String> delete(@RequestParam List<Long> ids){
         dishService.deleteByIds(ids);
+        redisTemplate.delete("dish_*");
         return R.success("删除成功！");
     }
     @GetMapping("/{dishId}")
@@ -93,11 +100,21 @@ public class DishController {
     }
     @PutMapping
     public R<String> updataDishFlover(@RequestBody DishDTO dishDTO){
+        Dish dish=dishService.getById(dishDTO.getId());
+        redisTemplate.delete("dish_"+dish.getCategoryId()+"_1");
+        if(dish.getCategoryId()!=dishDTO.getCategoryId()){
+            redisTemplate.delete("dish_"+dishDTO.getCategoryId()+"_1");
+        }
         dishService.updateFlavor(dishDTO);
         return R.success("菜品修改成功！");
     }
     @GetMapping("/list")
     public R<List<DishDTO>> list(Dish dish){
+        String key="dish_"+dish.getCategoryId()+"_"+dish.getStatus();
+        List<DishDTO> dishDTOList=(List<DishDTO>) redisTemplate.opsForValue().get(key);
+        if (!CollectionUtils.isEmpty(dishDTOList)) {
+            return R.success(dishDTOList);
+        }
         LambdaQueryWrapper<Dish> wrapper=new LambdaQueryWrapper<>();
         wrapper.eq(Dish::getCategoryId,dish.getCategoryId()).eq(dish.getStatus()!=null,Dish::getStatus,dish.getStatus()).orderByDesc(Dish::getSort).orderByDesc(Dish::getUpdateTime);
         List<Dish> dishes=dishService.list(wrapper);
@@ -111,6 +128,7 @@ public class DishController {
             dishDTO.setFlavors(flavors);
             return dishDTO;
         }).collect(Collectors.toList());
+        redisTemplate.opsForValue().set(key,dishDTOS,1, TimeUnit.HOURS);
         return R.success(dishDTOS);
     }
 //    @GetMapping("/list")

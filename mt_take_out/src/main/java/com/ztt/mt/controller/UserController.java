@@ -8,6 +8,7 @@ import com.ztt.mt.service.UserService;
 import com.ztt.mt.utils.R;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.mail.EmailException;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import javax.annotation.Resource;
 import javax.servlet.http.HttpSession;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 用户信息(User)表控制层
@@ -31,13 +33,15 @@ public class UserController {
      */
     @Autowired
     private UserService userService;
+    @Autowired
+    private RedisTemplate redisTemplate;
     @PostMapping("/sendMsg")
-    public R<String> sendMsg(HttpSession session, @RequestBody Map<String,String> email){
+    public R<String> sendMsg( @RequestBody Map<String,String> email){
         String code=ValidateCodeUtils.generateValidateCode4String(6);
         log.info("登录验证码：",code);
         try {
             SendEmailUtils.sendAuthCodeEmail(email.get("phone"), code);
-            session.setAttribute("code",code);
+            redisTemplate.opsForValue().set(email.get("phone")+":code",code,5, TimeUnit.MINUTES);
             return R.success("已发送");
         } catch (EmailException e) {
             e.printStackTrace();
@@ -48,8 +52,11 @@ public class UserController {
     public R<String> login(HttpSession session,@RequestBody Map<String,Object> map){
         String phone = (String) map.get("phone");
         String code= (String) map.get("code");
-        String sessionCode= (String) session.getAttribute("code");
-        if(code!=null&& code.equals(sessionCode)){
+        Object redisCode=redisTemplate.opsForValue().get(phone+":code");
+        if(redisCode==null){
+            return R.error("验证码已过期！");
+        }
+        if(code!=null&& code.equals(redisCode)){
             LambdaQueryWrapper<User> wrapper=new LambdaQueryWrapper<>();
             wrapper.eq(User::getPhone,phone);
             User user=userService.getOne(wrapper);
@@ -59,6 +66,7 @@ public class UserController {
                 user.setStatus(1);
                 userService.save(user);
             }
+            redisTemplate.delete(phone+":code");
             session.setAttribute("user",user.getId());
             return R.success("用户登录成功！");
         }else
